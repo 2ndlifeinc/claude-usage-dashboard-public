@@ -33,10 +33,87 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      
+      - name: Test imports
+        run: python -c "from app.main import app; from app.chrome import scan_all_profiles; from app.claude_api import fetch_all_usage; print('All imports OK')"
+      
+      - name: E2E test (server starts and responds)
+        shell: bash
+        run: |
+          export CLAUDE_DASHBOARD_PORT=18099
+          export CLAUDE_DASHBOARD_NO_TRAY=1
+          export CLAUDE_DASHBOARD_NO_BROWSER=1
+          
+          # Start server in background
+          python run.py &
+          APP_PID=$!
+          
+          # Wait for server
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:18099/ > /dev/null 2>&1; then
+              echo "Server started"
+              break
+            fi
+            sleep 1
+          done
+          
+          # Test endpoints
+          echo "=== Testing index ==="
+          curl -sf http://localhost:18099/ | head -c 200
+          echo ""
+          
+          echo "=== Testing /api/usage ==="
+          curl -sf http://localhost:18099/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'Accounts: {len(d)}'); assert isinstance(d, list)"
+          
+          echo "=== Testing /api/config ==="
+          curl -sf http://localhost:18099/api/config | python -c "import json,sys; d=json.load(sys.stdin); print(d); assert 'refresh_interval' in d"
+          
+          echo "=== All e2e tests passed ==="
+          kill $APP_PID 2>/dev/null || true
       
       - name: Build
         run: python build.py
+      
+      - name: E2E test binary
+        shell: bash
+        env:
+          CI: "true"
+        run: |
+          BINARY="${{ matrix.build_ext }}"
+          if [ ! -f "$BINARY" ]; then
+            echo "Binary not found: $BINARY"
+            exit 1
+          fi
+          
+          export CLAUDE_DASHBOARD_PORT=18098
+          export CLAUDE_DASHBOARD_NO_TRAY=1
+          export CLAUDE_DASHBOARD_NO_BROWSER=1
+          
+          chmod +x "$BINARY" 2>/dev/null || true
+          "$BINARY" &
+          BIN_PID=$!
+          
+          # Binary takes longer to unpack
+          for i in $(seq 1 60); do
+            if curl -s http://localhost:18098/ > /dev/null 2>&1; then
+              echo "Binary started"
+              break
+            fi
+            sleep 1
+          done
+          
+          echo "=== Testing binary index ==="
+          curl -sf http://localhost:18098/ | head -c 200
+          echo ""
+          
+          echo "=== Testing binary /api/usage ==="
+          curl -sf http://localhost:18098/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'Accounts: {len(d)}'); assert isinstance(d, list)"
+          
+          echo "=== Binary e2e tests passed ==="
+          kill $BIN_PID 2>/dev/null || true
       
       - name: Rename asset
         shell: bash
