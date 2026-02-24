@@ -6,8 +6,19 @@ on:
       - 'v*'
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-exe
+            asset_name: Claude-Usage-Dashboard-Windows.exe
+            build_ext: dist/Claude-Usage-Dashboard.exe
+          - os: macos-latest
+            artifact: macos-app
+            asset_name: Claude-Usage-Dashboard-macOS
+            build_ext: dist/Claude-Usage-Dashboard
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       
@@ -18,28 +29,40 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       
-      - name: Build exe
+      - name: Build
         run: python build.py
+      
+      - name: Rename asset
+        shell: bash
+        run: |
+          if [ -f "${{ matrix.build_ext }}" ]; then
+            cp "${{ matrix.build_ext }}" "${{ matrix.asset_name }}"
+          fi
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: dist/Claude-Usage-Dashboard.exe
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.asset_name }}
 
   release:
-    needs: [build-windows]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: windows-exe
           path: dist/
+          merge-multiple: true
+      
+      - name: List assets
+        run: ls -la dist/
       
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Claude-Usage-Dashboard.exe
+          files: |
+            dist/Claude-Usage-Dashboard-Windows.exe
+            dist/Claude-Usage-Dashboard-macOS
           generate_release_notes: true

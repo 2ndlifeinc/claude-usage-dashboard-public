@@ -124,11 +124,17 @@ def main():
 
     threading.Thread(target=open_delayed, daemon=True).start()
 
-    # Run tray in background thread
-    threading.Thread(target=run_tray, daemon=True).start()
-
-    # Run server (blocking)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    if sys.platform == "darwin":
+        # macOS: pystray needs main thread, run server in background
+        threading.Thread(
+            target=lambda: uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning"),
+            daemon=True,
+        ).start()
+        run_tray()  # blocks on main thread
+    else:
+        # Windows/Linux: tray in background, server on main thread
+        threading.Thread(target=run_tray, daemon=True).start()
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
