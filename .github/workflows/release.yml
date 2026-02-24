@@ -1,9 +1,11 @@
 name: Build and Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.1.0)'
+        required: true
 
 jobs:
   build:
@@ -20,7 +22,11 @@ jobs:
             build_ext: dist/Claude-Usage-Dashboard
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source (private repo)
+        uses: actions/checkout@v4
+        with:
+          repository: 2ndlifeinc/claude-usage-dashboard
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
       
       - uses: actions/setup-python@v5
         with:
@@ -34,10 +40,7 @@ jobs:
       
       - name: Rename asset
         shell: bash
-        run: |
-          if [ -f "${{ matrix.build_ext }}" ]; then
-            cp "${{ matrix.build_ext }}" "${{ matrix.asset_name }}"
-          fi
+        run: cp "${{ matrix.build_ext }}" "${{ matrix.asset_name }}"
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -56,13 +59,22 @@ jobs:
           path: dist/
           merge-multiple: true
       
-      - name: List assets
-        run: ls -la dist/
-      
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag }}
           files: |
             dist/Claude-Usage-Dashboard-Windows.exe
             dist/Claude-Usage-Dashboard-macOS
-          generate_release_notes: true
+          generate_release_notes: false
+          body: |
+            ## Claude Usage Dashboard ${{ github.event.inputs.tag }}
+            
+            ### Downloads
+            - **Windows**: `Claude-Usage-Dashboard-Windows.exe`
+            - **macOS**: `Claude-Usage-Dashboard-macOS`
+            
+            ### How to use
+            1. Download for your OS
+            2. Run the app (Chrome must be installed with Claude logged in)
+            3. Dashboard opens at http://localhost:18080

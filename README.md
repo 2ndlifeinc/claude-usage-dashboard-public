@@ -2,8 +2,6 @@
 
 Monitor all your Claude accounts in one place. Automatically detects Chrome profiles logged into claude.ai and displays real-time usage.
 
-![Dashboard Preview](docs/preview.png)
-
 ## Features
 
 - 🔍 **Auto-detect**: Scans all Chrome profiles for Claude sessions
@@ -15,12 +13,14 @@ Monitor all your Claude accounts in one place. Automatically detects Chrome prof
 ## Install
 
 ### Windows
-Download `Claude-Usage-Dashboard.exe` from [Releases](https://github.com/2ndlifeinc/claude-usage-dashboard-public/releases).
+Download `Claude-Usage-Dashboard-Windows.exe` from [Releases](https://github.com/2ndlifeinc/claude-usage-dashboard-public/releases).
 
-### From source
+### macOS
+Download `Claude-Usage-Dashboard-macOS` from [Releases](https://github.com/2ndlifeinc/claude-usage-dashboard-public/releases).
+
 ```bash
-pip install -r requirements.txt
-python -m app
+chmod +x Claude-Usage-Dashboard-macOS
+./Claude-Usage-Dashboard-macOS
 ```
 
 ## How it works
