@@ -41,22 +41,20 @@ jobs:
       - name: Test imports
         run: python -c "from app.main import app; from app.chrome import scan_all_profiles; from app.claude_api import fetch_all_usage; print('All imports OK')"
       
-      - name: E2E test (server starts and responds)
+      - name: E2E test (source)
         shell: bash
         run: |
           export CLAUDE_DASHBOARD_PORT=18099
           export CLAUDE_DASHBOARD_NO_TRAY=1
           export CLAUDE_DASHBOARD_NO_BROWSER=1
-          
-          # Start server in background, capture stderr
           TMPLOG="${RUNNER_TEMP:-/tmp}"
-          python run.py > "$TMPLOG/app_stdout.log" 2> "$TMPLOG/app_stderr.log" &
+          
+          python run.py > "$TMPLOG/src_stdout.log" 2> "$TMPLOG/src_stderr.log" &
           APP_PID=$!
           
-          # Wait for server (up to 30s)
           STARTED=0
           for i in $(seq 1 30); do
-            if curl -s http://localhost:18099/ > /dev/null 2>&1; then
+            if curl -s http://localhost:18099/api/config > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               STARTED=1
               break
@@ -65,51 +63,56 @@ jobs:
           done
           
           if [ "$STARTED" = "0" ]; then
-            echo "=== Server failed to start ==="
-            cat "$TMPLOG/app_stderr.log"
+            echo "::error::Source server failed to start"
+            cat "$TMPLOG/src_stderr.log"
             kill $APP_PID 2>/dev/null || true
             exit 1
           fi
           
-          # Test endpoints (use -v on failure for debugging)
-          echo "=== Testing index ==="
-          curl -s http://localhost:18099/ -o /dev/null -w "HTTP %{http_code}" || { curl -v http://localhost:18099/ 2>&1; cat "$TMPLOG/app_stderr.log"; exit 1; }
-          echo ""
+          # Test index returns 200 with HTML
+          HTTP_CODE=$(curl -s -o "$TMPLOG/index.html" -w "%{http_code}" http://localhost:18099/)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Index returned HTTP $HTTP_CODE"
+            cat "$TMPLOG/src_stderr.log"
+            kill $APP_PID 2>/dev/null || true
+            exit 1
+          fi
+          grep -q "<html" "$TMPLOG/index.html" || { echo "::error::Index response is not HTML"; exit 1; }
+          echo "✅ Index OK (HTTP $HTTP_CODE)"
           
-          echo "=== Testing /api/usage ==="
-          curl -s http://localhost:18099/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'Accounts: {len(d)}'); assert isinstance(d, list)" || { curl -v http://localhost:18099/api/usage 2>&1; exit 1; }
+          # Test /api/usage returns JSON array
+          curl -sf http://localhost:18099/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'✅ Usage OK ({len(d)} accounts)'); assert isinstance(d, list)"
           
-          echo "=== Testing /api/config ==="
-          curl -s http://localhost:18099/api/config | python -c "import json,sys; d=json.load(sys.stdin); print(d); assert 'refresh_interval' in d" || { curl -v http://localhost:18099/api/config 2>&1; exit 1; }
+          # Test /api/config returns valid config
+          curl -sf http://localhost:18099/api/config | python -c "import json,sys; d=json.load(sys.stdin); print(f'✅ Config OK: {d}'); assert 'refresh_interval' in d"
           
-          echo "=== All e2e tests passed ==="
+          echo "=== Source e2e passed ==="
           kill $APP_PID 2>/dev/null || true
       
       - name: Build
         run: python build.py
       
-      - name: E2E test binary
+      - name: E2E test (binary)
         shell: bash
         run: |
           BINARY="${{ matrix.build_ext }}"
           if [ ! -f "$BINARY" ]; then
-            echo "Binary not found: $BINARY"
+            echo "::error::Binary not found: $BINARY"
             exit 1
           fi
           
           export CLAUDE_DASHBOARD_PORT=18098
           export CLAUDE_DASHBOARD_NO_TRAY=1
           export CLAUDE_DASHBOARD_NO_BROWSER=1
-          
           TMPLOG="${RUNNER_TEMP:-/tmp}"
+          
           chmod +x "$BINARY" 2>/dev/null || true
           "$BINARY" > "$TMPLOG/bin_stdout.log" 2> "$TMPLOG/bin_stderr.log" &
           BIN_PID=$!
           
-          # Binary takes longer to unpack
           STARTED=0
           for i in $(seq 1 60); do
-            if curl -s http://localhost:18098/ > /dev/null 2>&1; then
+            if curl -s http://localhost:18098/api/config > /dev/null 2>&1; then
               echo "Binary started after ${i}s"
               STARTED=1
               break
@@ -118,20 +121,33 @@ jobs:
           done
           
           if [ "$STARTED" = "0" ]; then
-            echo "=== Binary failed to start ==="
+            echo "::error::Binary failed to start"
+            echo "=== stderr ==="
             cat "$TMPLOG/bin_stderr.log"
+            echo "=== stdout ==="
+            cat "$TMPLOG/bin_stdout.log"
             kill $BIN_PID 2>/dev/null || true
             exit 1
           fi
           
-          echo "=== Testing binary index ==="
-          curl -sf http://localhost:18098/ | head -c 200
-          echo ""
+          # Test index
+          HTTP_CODE=$(curl -s -o "$TMPLOG/bin_index.html" -w "%{http_code}" http://localhost:18098/)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Binary index returned HTTP $HTTP_CODE"
+            cat "$TMPLOG/bin_stderr.log"
+            kill $BIN_PID 2>/dev/null || true
+            exit 1
+          fi
+          grep -q "<html" "$TMPLOG/bin_index.html" || { echo "::error::Binary index is not HTML"; exit 1; }
+          echo "✅ Binary index OK"
           
-          echo "=== Testing binary /api/usage ==="
-          curl -sf http://localhost:18098/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'Accounts: {len(d)}'); assert isinstance(d, list)"
+          # Test /api/usage
+          curl -sf http://localhost:18098/api/usage | python -c "import json,sys; d=json.load(sys.stdin); print(f'✅ Binary usage OK ({len(d)} accounts)'); assert isinstance(d, list)"
           
-          echo "=== Binary e2e tests passed ==="
+          # Test /api/config
+          curl -sf http://localhost:18098/api/config | python -c "import json,sys; d=json.load(sys.stdin); print(f'✅ Binary config OK: {d}'); assert 'refresh_interval' in d"
+          
+          echo "=== Binary e2e passed ==="
           kill $BIN_PID 2>/dev/null || true
       
       - name: Rename asset
