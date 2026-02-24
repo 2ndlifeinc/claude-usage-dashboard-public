@@ -47,18 +47,27 @@ jobs:
           export CLAUDE_DASHBOARD_NO_TRAY=1
           export CLAUDE_DASHBOARD_NO_BROWSER=1
           
-          # Start server in background
-          python run.py &
+          # Start server in background, capture stderr
+          python run.py > /tmp/app_stdout.log 2> /tmp/app_stderr.log &
           APP_PID=$!
           
-          # Wait for server
+          # Wait for server (up to 30s)
+          STARTED=0
           for i in $(seq 1 30); do
             if curl -s http://localhost:18099/ > /dev/null 2>&1; then
-              echo "Server started"
+              echo "Server started after ${i}s"
+              STARTED=1
               break
             fi
             sleep 1
           done
+          
+          if [ "$STARTED" = "0" ]; then
+            echo "=== Server failed to start ==="
+            cat /tmp/app_stderr.log
+            kill $APP_PID 2>/dev/null || true
+            exit 1
+          fi
           
           # Test endpoints
           echo "=== Testing index ==="
@@ -79,8 +88,6 @@ jobs:
       
       - name: E2E test binary
         shell: bash
-        env:
-          CI: "true"
         run: |
           BINARY="${{ matrix.build_ext }}"
           if [ ! -f "$BINARY" ]; then
@@ -93,17 +100,26 @@ jobs:
           export CLAUDE_DASHBOARD_NO_BROWSER=1
           
           chmod +x "$BINARY" 2>/dev/null || true
-          "$BINARY" &
+          "$BINARY" > /tmp/bin_stdout.log 2> /tmp/bin_stderr.log &
           BIN_PID=$!
           
           # Binary takes longer to unpack
+          STARTED=0
           for i in $(seq 1 60); do
             if curl -s http://localhost:18098/ > /dev/null 2>&1; then
-              echo "Binary started"
+              echo "Binary started after ${i}s"
+              STARTED=1
               break
             fi
             sleep 1
           done
+          
+          if [ "$STARTED" = "0" ]; then
+            echo "=== Binary failed to start ==="
+            cat /tmp/bin_stderr.log
+            kill $BIN_PID 2>/dev/null || true
+            exit 1
+          fi
           
           echo "=== Testing binary index ==="
           curl -sf http://localhost:18098/ | head -c 200
