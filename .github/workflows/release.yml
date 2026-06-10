@@ -13,11 +13,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: [self-hosted, Windows]
             artifact: windows-exe
             asset_name: Claude-Usage-Dashboard-Windows.exe
             build_ext: dist/Claude-Usage-Dashboard.exe
-          - os: macos-latest
+          - os: [self-hosted, macOS]
             artifact: macos-app
             asset_name: Claude-Usage-Dashboard-macOS
             build_ext: dist/Claude-Usage-Dashboard
