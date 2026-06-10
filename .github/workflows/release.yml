@@ -162,7 +162,7 @@ jobs:
 
   release:
     needs: [build]
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, macos-or-linux]
     permissions:
       contents: write
     steps:
