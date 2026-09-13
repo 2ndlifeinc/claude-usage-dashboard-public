@@ -8,7 +8,30 @@ on:
         required: true
 
 jobs:
+  prepare:
+    runs-on: [self-hosted, macos-or-linux]
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Create draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                 --title "$TAG" --notes 'Assets are uploaded by the build matrix.'
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq "[.[] | select(.tag_name == \"$TAG\")][0].id")
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -154,39 +177,48 @@ jobs:
         shell: bash
         run: cp "${{ matrix.build_ext }}" "${{ matrix.asset_name }}"
       
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.asset_name }}
+      - name: Upload asset to draft release
+        shell: bash
+        env:
+          TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          ASSET: ${{ matrix.asset_name }}
+        run: |
+          existing=$(curl -sS -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" \
+            | python -c "import json,os,sys; print(next((a['id'] for a in json.load(sys.stdin) if a['name'] == os.environ['ASSET']), ''))")
+          if [ -n "$existing" ]; then
+            curl -sSf -X DELETE -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$existing"
+          fi
+          curl -sSf -X POST -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$ASSET" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$ASSET"
 
   release:
-    needs: [build]
+    needs: [prepare, build]
     runs-on: [self-hosted, macos-or-linux]
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist/
-          merge-multiple: true
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.tag }}
-          files: |
-            dist/Claude-Usage-Dashboard-Windows.exe
-            dist/Claude-Usage-Dashboard-macOS
-          generate_release_notes: false
-          body: |
-            ## Claude Usage Dashboard ${{ github.event.inputs.tag }}
-            
-            ### Downloads
-            - **Windows**: `Claude-Usage-Dashboard-Windows.exe`
-            - **macOS**: `Claude-Usage-Dashboard-macOS`
-            
-            ### How to use
-            1. Download for your OS
-            2. Run the app (Chrome must be installed with Claude logged in)
-            3. Dashboard opens at http://localhost:18080
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          cat > /tmp/release-notes.md <<'NOTES'
+          ## Claude Usage Dashboard TAG_PLACEHOLDER
+
+          ### Downloads
+          - **Windows**: `Claude-Usage-Dashboard-Windows.exe`
+          - **macOS**: `Claude-Usage-Dashboard-macOS`
+
+          ### How to use
+          1. Download for your OS
+          2. Run the app (Chrome must be installed with Claude logged in)
+          3. Dashboard opens at http://localhost:18080
+          NOTES
+          sed -i.bak "s/TAG_PLACEHOLDER/$TAG/" /tmp/release-notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --latest --notes-file /tmp/release-notes.md
